@@ -14,8 +14,6 @@ jobs:
       - uses: actions/checkout@v4 # Step 1: Clone the repository
 
       - name: Set up Python
-        # We need the output path for dynamic referencing later
-        id: setup-python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12' 
@@ -51,7 +49,7 @@ jobs:
 
       - name: Build with PyInstaller
         # NOTE: The backtick (`) is used for line continuation in PowerShell.
-        # The Vosk and FFmpeg paths are now dynamically added.
+        # The vosk path now uses the reliable env.pythonLocation variable.
         run: |
           pyinstaller --windowed --name "TF2VoiceCloner" `
             --collect-all torch `
@@ -61,13 +59,6 @@ jobs:
             --hidden-import "torch.nn.intrinsic.qat" `
             --add-binary "${{ env.FFMPEG_BIN_PATH }}\ffmpeg.exe;." `
             --add-binary "${{ env.FFMPEG_BIN_PATH }}\ffprobe.exe;." `
-            --add-data "${{ steps.setup-python.outputs.python-path }}\Lib\site-packages\vosk\__init__.py;vosk" `
+            --add-data "${{ env.pythonLocation }}\Lib\site-packages\vosk\__init__.py;vosk" `
             tf2_voice_editor.py
         shell: powershell
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: TF2VoiceCloner-Windows
-          path: dist/TF2VoiceCloner/
-          retention-days: 7

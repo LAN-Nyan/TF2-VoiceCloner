@@ -33,7 +33,7 @@ jobs:
       - name: Build with PyInstaller
         run: |
           pip install pyinstaller
-          pyinstaller --onefile your_main_script.py  # <- change this to your actual entry point script
+          pyinstaller --onefile tf2_voice_editor.py
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v3

@@ -1,42 +1,53 @@
-name: Build for Windows and Mac
+name: Build Windows Executable
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    branches:
+      - main  # Trigger the build when code is pushed to the 'main' branch
+  workflow_dispatch: # Allows manual trigger from the GitHub Actions tab
 
 jobs:
-  build:
-    strategy:
-      matrix:
-        os: [windows-latest, macos-latest]
-        python-version: [3.9]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v3
+  build_exe:
+    runs-on: windows-latest # Use a fresh Windows server environment
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+    steps:
+      - uses: actions/checkout@v4 # Step 1: Clone the repository
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.12' # Ensure Python version matches your environment
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Freeze requirements
-        run: |
-          pip freeze > requirements.lock
+          # Install PyInstaller
+          pip install pyinstaller
+          # Install core dependencies (Adjust if you use a requirements.txt)
+          pip install PyQt6 f5-tts torch torchaudio soundfile pydub vosk requests
 
       - name: Build with PyInstaller
+        # We use the robust directory build and include the necessary packages/hooks
         run: |
-          pip install pyinstaller
-          pyinstaller --onefile tf2_voice_editor.py
+          pyinstaller --windowed --name "TF2VoiceCloner" ^
+            --collect-all torch ^
+            --collect-all f5_tts ^
+            --collect-all vosk ^
+            --collect-all pydub ^
+            --hidden-import "torch.nn.intrinsic.qat" ^
+            tf2_voice_editor.py
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: tf2-voicecloner-${{ matrix.os }}
-          path: dist/
+          name: TF2VoiceCloner-Windows
+          path: dist/TF2VoiceCloner/
+          retention-days: 7
+          
+      - name: Create Release (Optional)
+        # This step packages the output and creates a downloadable release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/TF2VoiceCloner/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

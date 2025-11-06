@@ -14,27 +14,56 @@ jobs:
       - uses: actions/checkout@v4 # Step 1: Clone the repository
 
       - name: Set up Python
+        # We need the output path for dynamic referencing later
+        id: setup-python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12' # Ensure Python version matches your environment
+          python-version: '3.12' 
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: |
           # Install PyInstaller
           pip install pyinstaller
-          # Install core dependencies (Adjust if you use a requirements.txt)
+          # Install core dependencies
           pip install PyQt6 f5-tts torch torchaudio soundfile pydub vosk requests
 
-      - name: Build with PyInstaller
-        # We use the robust directory build and include the necessary packages/hooks
+      - name: ⬇️ Download and Setup FFmpeg
+        # FFmpeg is an external binary required by pydub for audio operations.
+        # This step downloads and extracts it, then sets an environment variable to its path.
         run: |
-          pyinstaller --windowed --name "TF2VoiceCloner" ^
-            --collect-all torch ^
-            --collect-all f5_tts ^
-            --collect-all vosk ^
-            --collect-all pydub ^
-            --hidden-import "torch.nn.intrinsic.qat" ^
+          # Create a temporary directory for FFmpeg
+          mkdir -p $env:RUNNER_TEMP\ffmpeg
+          
+          # Download the FFmpeg release for Windows
+          $url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full.7z"
+          $output = "$env:RUNNER_TEMP\ffmpeg\ffmpeg.7z"
+          Invoke-WebRequest -Uri $url -OutFile $output
+          
+          # Unzip (7-Zip is pre-installed on GitHub Windows runners)
+          7z x $output -o"$env:RUNNER_TEMP\ffmpeg" -r -y
+          
+          # Find the actual extracted folder name (it changes with versions)
+          $ffmpeg_folder = Get-ChildItem "$env:RUNNER_TEMP\ffmpeg" | Where-Object { $_.PSIsContainer -and $_.Name -like "ffmpeg-*" }
+          
+          # Define environment variable pointing to the bin folder
+          echo "FFMPEG_BIN_PATH=$($ffmpeg_folder.FullName)\bin" >> $env:GITHUB_ENV
+        shell: powershell
+
+      - name: Build with PyInstaller
+        # NOTE: The backtick (`) is used for line continuation in PowerShell.
+        # The Vosk and FFmpeg paths are now dynamically added.
+        run: |
+          pyinstaller --windowed --name "TF2VoiceCloner" `
+            --collect-all torch `
+            --collect-all f5_tts `
+            --collect-all vosk `
+            --collect-all pydub `
+            --hidden-import "torch.nn.intrinsic.qat" `
+            --add-binary "${{ env.FFMPEG_BIN_PATH }}\ffmpeg.exe;." `
+            --add-binary "${{ env.FFMPEG_BIN_PATH }}\ffprobe.exe;." `
+            --add-data "${{ steps.setup-python.outputs.python-path }}\Lib\site-packages\vosk\__init__.py;vosk" `
             tf2_voice_editor.py
+        shell: powershell
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -42,12 +71,3 @@ jobs:
           name: TF2VoiceCloner-Windows
           path: dist/TF2VoiceCloner/
           retention-days: 7
-          
-      - name: Create Release (Optional)
-        # This step packages the output and creates a downloadable release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/TF2VoiceCloner/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

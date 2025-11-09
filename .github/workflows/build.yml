@@ -1,5 +1,4 @@
-name: Build Windows Executable
-
+name: Build Multi-Platform Executables
 on:
   push:
     branches:
@@ -7,51 +6,35 @@ on:
   workflow_dispatch: # Allows manual trigger from the GitHub Actions tab
 
 jobs:
-  build_exe:
-    runs-on: windows-latest # Use a fresh Windows server environment
-
+  build_windows:
+    runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4 # Step 1: Clone the repository
-
+      - uses: actions/checkout@v4
+      
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12' 
-
+          python-version: '3.12'
+      
       - name: Install Python dependencies
         run: |
-          # Install PyInstaller
           pip install pyinstaller
-          # Install core dependencies
           pip install PyQt6 f5-tts torch torchaudio soundfile pydub vosk requests
-
+      
       - name: ⬇️ Download and Setup FFmpeg
-        # FFmpeg is an external binary required by pydub for audio operations.
-        # This step downloads and extracts it, then sets an environment variable to its path.
         run: |
-          # Create a temporary directory for FFmpeg
           mkdir -p $env:RUNNER_TEMP\ffmpeg
-          
-          # Download the FFmpeg release for Windows
           $url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full.7z"
           $output = "$env:RUNNER_TEMP\ffmpeg\ffmpeg.7z"
           Invoke-WebRequest -Uri $url -OutFile $output
-          
-          # Unzip (7-Zip is pre-installed on GitHub Windows runners)
           7z x $output -o"$env:RUNNER_TEMP\ffmpeg" -r -y
-          
-          # Find the actual extracted folder name (it changes with versions)
           $ffmpeg_folder = Get-ChildItem "$env:RUNNER_TEMP\ffmpeg" | Where-Object { $_.PSIsContainer -and $_.Name -like "ffmpeg-*" }
-          
-          # Define environment variable pointing to the bin folder
           echo "FFMPEG_BIN_PATH=$($ffmpeg_folder.FullName)\bin" >> $env:GITHUB_ENV
         shell: powershell
-
+      
       - name: Build with PyInstaller
-        # NOTE: The backtick (`) is used for line continuation in PowerShell.
-        # The vosk path now uses the reliable env.pythonLocation variable.
         run: |
-          pyinstaller --windowed --name "TF2VoiceCloner" `
+          pyinstaller --windowed --name "TF2VoiceEditor-Windows" `
             --collect-all torch `
             --collect-all f5_tts `
             --collect-all vosk `
@@ -62,3 +45,147 @@ jobs:
             --add-data "${{ env.pythonLocation }}\Lib\site-packages\vosk\__init__.py;vosk" `
             tf2_voice_editor.py
         shell: powershell
+      
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TF2VoiceEditor-Windows
+          path: dist/TF2VoiceEditor-Windows.exe
+
+  build_macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Install Python dependencies
+        run: |
+          pip install pyinstaller
+          pip install PyQt6 f5-tts torch torchaudio soundfile pydub vosk requests
+      
+      - name: Install FFmpeg via Homebrew
+        run: |
+          brew install ffmpeg
+          echo "FFMPEG_BIN_PATH=$(which ffmpeg | xargs dirname)" >> $GITHUB_ENV
+      
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller --windowed --name "TF2VoiceEditor-macOS" \
+            --collect-all torch \
+            --collect-all f5_tts \
+            --collect-all vosk \
+            --collect-all pydub \
+            --hidden-import "torch.nn.intrinsic.qat" \
+            --add-binary "$FFMPEG_BIN_PATH/ffmpeg:." \
+            --add-binary "$FFMPEG_BIN_PATH/ffprobe:." \
+            --add-data "$(python -c 'import vosk; import os; print(os.path.dirname(vosk.__file__))')/__init__.py:vosk" \
+            tf2_voice_editor.py
+      
+      - name: Create DMG (Optional)
+        run: |
+          # Create a simple DMG for distribution
+          mkdir -p dist/dmg
+          cp -r "dist/TF2VoiceEditor-macOS.app" dist/dmg/
+          hdiutil create -volname "TF2VoiceEditor" -srcfolder dist/dmg -ov -format UDZO dist/TF2VoiceEditor-macOS.dmg
+      
+      - name: Upload macOS App
+        uses: actions/upload-artifact@v4
+        with:
+          name: TF2VoiceEditor-macOS-app
+          path: dist/TF2VoiceEditor-macOS.app
+      
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: TF2VoiceEditor-macOS-dmg
+          path: dist/TF2VoiceEditor-macOS.dmg
+
+  create_release:
+    needs: [build_windows, build_macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      
+      - name: Create Release Notes
+        run: |
+          cat > RELEASE_NOTES.md << 'EOF'
+          ## TF2 Voice Line Editor Release
+          
+          ### What's New
+          - ✨ **Auto Package Install**: First-time setup automatically installs all required dependencies
+          - 🎤 AI-powered voice cloning using F5-TTS
+          - 🔍 Smart audio file transcription
+          - 🎵 Audio clip combination and editing
+          - 🎨 Modern dark-themed interface
+          
+          ### Installation
+          
+          **Windows:**
+          1. Download `TF2VoiceEditor-Windows.exe`
+          2. Run the executable
+          3. On first run, the app will automatically install all required packages (takes 2-5 minutes)
+          4. Enjoy!
+          
+          **macOS:**
+          1. Download `TF2VoiceEditor-macOS.dmg`
+          2. Open the DMG and drag the app to Applications
+          3. Right-click the app and select "Open" (required for first run due to macOS security)
+          4. On first run, the app will automatically install all required packages (takes 2-5 minutes)
+          5. Enjoy!
+          
+          ### Features
+          - 📂 Scan directories for TF2 audio files
+          - 🔎 Search and filter by character and transcript
+          - 🎙️ AI voice generation with reference audio
+          - 🎼 Combine multiple clips into one file
+          - 💾 Export to WAV format
+          
+          ### System Requirements
+          - **Windows**: Windows 10 or later
+          - **macOS**: macOS 11 (Big Sur) or later
+          - **RAM**: 4GB minimum (8GB recommended for AI features)
+          - **Disk Space**: 2GB for initial package installation
+          
+          ### Known Issues
+          - First launch requires internet connection for package installation
+          - AI voice generation requires significant RAM and may be slow on older systems
+          
+          ### Support
+          If you encounter issues, please open an issue on GitHub with your OS version and error details.
+          EOF
+      
+      - name: Get current date
+        id: date
+        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+      
+      - name: Zip macOS app for release
+        run: |
+          cd artifacts/TF2VoiceEditor-macOS-app
+          zip -r ../../TF2VoiceEditor-macOS.app.zip .
+          cd ../..
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v1.0.0-${{ steps.date.outputs.date }}
+          name: Release v1.0.0 - ${{ steps.date.outputs.date }}
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/TF2VoiceEditor-Windows/TF2VoiceEditor-Windows.exe
+            artifacts/TF2VoiceEditor-macOS-dmg/TF2VoiceEditor-macOS.dmg
+            TF2VoiceEditor-macOS.app.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

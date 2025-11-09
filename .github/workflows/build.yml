@@ -16,10 +16,10 @@ jobs:
         with:
           python-version: '3.12'
       
-      - name: Install Python dependencies
+      - name: Install minimal dependencies for building
         run: |
           pip install pyinstaller
-          pip install PyQt6 f5-tts torch torchaudio soundfile pydub vosk requests
+          pip install PyQt6
       
       - name: ⬇️ Download and Setup FFmpeg
         run: |
@@ -32,17 +32,16 @@ jobs:
           echo "FFMPEG_BIN_PATH=$($ffmpeg_folder.FullName)\bin" >> $env:GITHUB_ENV
         shell: powershell
       
-      - name: Build with PyInstaller
+      - name: Build with PyInstaller (Lightweight)
         run: |
-          pyinstaller --windowed --name "TF2VoiceEditor-Windows" `
-            --collect-all torch `
-            --collect-all f5_tts `
-            --collect-all vosk `
-            --collect-all pydub `
-            --hidden-import "torch.nn.intrinsic.qat" `
+          # Build only with PyQt6, letting the app install ML libs at runtime
+          pyinstaller --onefile --windowed --name "TF2VoiceEditor-Windows" `
+            --collect-all PyQt6 `
             --add-binary "${{ env.FFMPEG_BIN_PATH }}\ffmpeg.exe;." `
             --add-binary "${{ env.FFMPEG_BIN_PATH }}\ffprobe.exe;." `
-            --add-data "${{ env.pythonLocation }}\Lib\site-packages\vosk\__init__.py;vosk" `
+            --hidden-import "PyQt6.QtCore" `
+            --hidden-import "PyQt6.QtGui" `
+            --hidden-import "PyQt6.QtWidgets" `
             tf2_voice_editor.py
         shell: powershell
       
@@ -62,34 +61,35 @@ jobs:
         with:
           python-version: '3.12'
       
-      - name: Install Python dependencies
+      - name: Install minimal dependencies for building
         run: |
           pip install pyinstaller
-          pip install PyQt6 f5-tts torch torchaudio soundfile pydub vosk requests
+          pip install PyQt6
       
       - name: Install FFmpeg via Homebrew
         run: |
           brew install ffmpeg
           echo "FFMPEG_BIN_PATH=$(which ffmpeg | xargs dirname)" >> $GITHUB_ENV
       
-      - name: Build with PyInstaller
+      - name: Build with PyInstaller (Lightweight)
         run: |
-          pyinstaller --windowed --name "TF2VoiceEditor-macOS" \
-            --collect-all torch \
-            --collect-all f5_tts \
-            --collect-all vosk \
-            --collect-all pydub \
-            --hidden-import "torch.nn.intrinsic.qat" \
+          # Build only with PyQt6, letting the app install ML libs at runtime
+          pyinstaller --onefile --windowed --name "TF2VoiceEditor-macOS" \
+            --collect-all PyQt6 \
             --add-binary "$FFMPEG_BIN_PATH/ffmpeg:." \
             --add-binary "$FFMPEG_BIN_PATH/ffprobe:." \
-            --add-data "$(python -c 'import vosk; import os; print(os.path.dirname(vosk.__file__))')/__init__.py:vosk" \
+            --hidden-import "PyQt6.QtCore" \
+            --hidden-import "PyQt6.QtGui" \
+            --hidden-import "PyQt6.QtWidgets" \
             tf2_voice_editor.py
       
-      - name: Create DMG (Optional)
+      - name: Create DMG
         run: |
           # Create a simple DMG for distribution
           mkdir -p dist/dmg
           cp -r "dist/TF2VoiceEditor-macOS.app" dist/dmg/
+          # Create Applications symlink for easy drag-and-drop
+          ln -s /Applications dist/dmg/Applications
           hdiutil create -volname "TF2VoiceEditor" -srcfolder dist/dmg -ov -format UDZO dist/TF2VoiceEditor-macOS.dmg
       
       - name: Upload macOS App
@@ -120,49 +120,86 @@ jobs:
       - name: Create Release Notes
         run: |
           cat > RELEASE_NOTES.md << 'EOF'
-          ## TF2 Voice Line Editor Release
+          ## 🎮 TF2 Voice Line Editor
           
-          ### What's New
-          - ✨ **Auto Package Install**: First-time setup automatically installs all required dependencies
+          ### ✨ What's New
+          - **🚀 Auto Package Install**: Revolutionary first-run setup! The app automatically downloads and installs all AI dependencies (torch, F5-TTS, etc.) with a beautiful progress dialog. No manual installation needed!
           - 🎤 AI-powered voice cloning using F5-TTS
-          - 🔍 Smart audio file transcription
+          - 🔍 Smart audio file transcription with Vosk
           - 🎵 Audio clip combination and editing
-          - 🎨 Modern dark-themed interface
+          - 🎨 Modern dark-themed TF2-inspired interface
+          - 📂 Bulk directory scanning for audio files
           
-          ### Installation
+          ### 📥 Installation
           
-          **Windows:**
-          1. Download `TF2VoiceEditor-Windows.exe`
-          2. Run the executable
-          3. On first run, the app will automatically install all required packages (takes 2-5 minutes)
-          4. Enjoy!
+          #### Windows
+          1. Download `TF2VoiceEditor-Windows.exe` (~150MB)
+          2. Double-click to run
+          3. **First launch**: The app will show an installer dialog and automatically download ~2GB of AI packages (torch, F5-TTS, vosk, etc.). This takes 5-10 minutes depending on your internet speed
+          4. Subsequent launches are instant!
           
-          **macOS:**
-          1. Download `TF2VoiceEditor-macOS.dmg`
+          #### macOS
+          1. Download `TF2VoiceEditor-macOS.dmg` (~150MB)
           2. Open the DMG and drag the app to Applications
-          3. Right-click the app and select "Open" (required for first run due to macOS security)
-          4. On first run, the app will automatically install all required packages (takes 2-5 minutes)
-          5. Enjoy!
+          3. Right-click the app → "Open" (required for first run due to macOS Gatekeeper)
+          4. **First launch**: The app will show an installer dialog and automatically download ~2GB of AI packages. This takes 5-10 minutes
+          5. Subsequent launches are instant!
           
-          ### Features
-          - 📂 Scan directories for TF2 audio files
-          - 🔎 Search and filter by character and transcript
-          - 🎙️ AI voice generation with reference audio
-          - 🎼 Combine multiple clips into one file
-          - 💾 Export to WAV format
+          > 💡 **Tip**: Make sure you have a stable internet connection for the first launch!
           
-          ### System Requirements
-          - **Windows**: Windows 10 or later
-          - **macOS**: macOS 11 (Big Sur) or later
-          - **RAM**: 4GB minimum (8GB recommended for AI features)
-          - **Disk Space**: 2GB for initial package installation
+          ### 🎯 Features
+          - 📂 **Smart Scanning**: Automatically detect TF2 characters from file paths
+          - 🔎 **Powerful Search**: Filter by transcript text and character
+          - 🎙️ **AI Voice Generation**: Clone any TF2 voice with reference audio
+          - 🎼 **Clip Combining**: Merge multiple audio files seamlessly
+          - 💾 **Export**: Save as high-quality WAV files
+          - 🎨 **TF2-Themed UI**: Beautiful gradient interface inspired by Team Fortress 2
           
-          ### Known Issues
-          - First launch requires internet connection for package installation
-          - AI voice generation requires significant RAM and may be slow on older systems
+          ### 💻 System Requirements
+          - **Windows**: Windows 10/11 (64-bit)
+          - **macOS**: macOS 11 (Big Sur) or later (Intel or Apple Silicon)
+          - **RAM**: 8GB minimum, 16GB recommended for AI features
+          - **Disk Space**: 
+            - Initial download: ~150MB
+            - First-run install: ~2GB for AI packages
+            - Runtime: Additional space for audio files
+          - **Internet**: Required for first-run package installation
           
-          ### Support
-          If you encounter issues, please open an issue on GitHub with your OS version and error details.
+          ### 🔧 Technical Details
+          - Built with PyQt6 for native UI
+          - Uses F5-TTS for voice cloning
+          - Vosk for speech transcription
+          - PyDub for audio processing
+          - FFmpeg included for format conversion
+          
+          ### ⚠️ Known Issues
+          - **First launch requires internet** and takes 5-10 minutes for package installation
+          - AI voice generation is computationally intensive (may be slow on older systems)
+          - macOS users must right-click → "Open" on first launch due to app signing
+          - Some antivirus software may flag the exe (false positive - the app is safe)
+          
+          ### 🐛 Troubleshooting
+          
+          **"App won't open" (macOS)**
+          - Right-click → "Open" instead of double-clicking
+          - Go to System Preferences → Security & Privacy and click "Open Anyway"
+          
+          **"Installation failed"**
+          - Check your internet connection
+          - Make sure you have ~2GB free disk space
+          - Try running as administrator (Windows) or with appropriate permissions (macOS)
+          
+          **"App is slow"**
+          - AI features require significant RAM and CPU
+          - Close other applications
+          - First-time AI operations may take longer
+          
+          ### 💬 Support
+          Found a bug? Have a feature request? Open an issue on GitHub!
+          
+          ---
+          
+          **Made with ❤️ for the TF2 community**
           EOF
       
       - name: Get current date
@@ -179,7 +216,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v1.0.0-${{ steps.date.outputs.date }}
-          name: Release v1.0.0 - ${{ steps.date.outputs.date }}
+          name: "🎮 TF2 Voice Editor v1.0.0 - Auto-Install Edition"
           body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false

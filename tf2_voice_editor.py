@@ -1,25 +1,198 @@
 #!/usr/bin/env python3
 """
-TF2 Voice Line Editor - Desktop Application
+TF2 Voice Line Editor - Desktop Application with Auto-Installer
 Standalone GUI app for voice line transcription and AI generation
-Requirements: pip install PyQt6 f5-tts torch torchaudio soundfile pydub vosk requests
 Build: pyinstaller --onefile --windowed --name "TF2VoiceEditor" tf2_voice_editor.py
 """
 
 import sys
 import os
 import json
+import subprocess
 import hashlib
 import threading
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QLabel, QPushButton, QLineEdit, QTextEdit, QListWidget, QListWidgetItem,
-    QComboBox, QFileDialog, QProgressBar, QScrollArea, QFrame, QMessageBox
+    QComboBox, QFileDialog, QProgressBar, QScrollArea, QFrame, QMessageBox,
+    QDialog
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt6.QtGui import QFont, QPalette, QColor, QIcon
 
+
+class DependencyInstaller(QDialog):
+    """Dialog for installing dependencies on first run"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Installing Dependencies")
+        self.setModal(True)
+        self.setMinimumSize(500, 300)
+        self.setup_ui()
+        
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(20)
+        layout.setContentsMargins(30, 30, 30, 30)
+        
+        # Title
+        title = QLabel("First-Time Setup")
+        title.setFont(QFont("Arial", 20, QFont.Weight.Bold))
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+        
+        # Description
+        desc = QLabel("Installing required packages...\nThis only happens once and may take a few minutes.")
+        desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+        
+        # Current package label
+        self.package_label = QLabel("Preparing...")
+        self.package_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.package_label)
+        
+        # Progress bar
+        self.progress = QProgressBar()
+        self.progress.setMinimum(0)
+        self.progress.setMaximum(100)
+        layout.addWidget(self.progress)
+        
+        # Status label
+        self.status_label = QLabel("")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setStyleSheet("color: gray; font-size: 10px;")
+        layout.addWidget(self.status_label)
+        
+        layout.addStretch()
+        
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #1f2937;
+            }
+            QLabel {
+                color: white;
+            }
+            QProgressBar {
+                border: 2px solid #374151;
+                border-radius: 5px;
+                text-align: center;
+                background-color: #374151;
+                color: white;
+            }
+            QProgressBar::chunk {
+                background-color: #fb923c;
+            }
+        """)
+
+
+class InstallWorker(QThread):
+    """Worker thread for installing dependencies"""
+    progress = pyqtSignal(int, str, str)  # percent, package_name, status
+    finished = pyqtSignal(bool, str)  # success, message
+    
+    def __init__(self):
+        super().__init__()
+        self.packages = [
+            "torch",
+            "torchaudio", 
+            "f5-tts",
+            "soundfile",
+            "pydub",
+            "vosk",
+            "requests"
+        ]
+        
+    def run(self):
+        """Install all packages"""
+        try:
+            total = len(self.packages)
+            
+            for idx, package in enumerate(self.packages):
+                percent = int((idx / total) * 100)
+                self.progress.emit(percent, package, f"Installing {package}...")
+                
+                # Install package
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", package, "--quiet"],
+                    capture_output=True,
+                    text=True
+                )
+                
+                if result.returncode != 0:
+                    self.finished.emit(False, f"Failed to install {package}: {result.stderr}")
+                    return
+                
+                self.progress.emit(int(((idx + 1) / total) * 100), package, f"Installed {package}")
+            
+            # Mark as installed
+            self.mark_installed()
+            self.finished.emit(True, "All packages installed successfully!")
+            
+        except Exception as e:
+            self.finished.emit(False, f"Installation error: {str(e)}")
+    
+    def mark_installed(self):
+        """Create marker file to indicate installation is complete"""
+        marker_path = os.path.join(os.path.dirname(sys.executable), ".tf2voice_installed")
+        if not os.path.exists(marker_path):
+            # If running from script, use script directory
+            marker_path = os.path.join(os.path.dirname(__file__), ".tf2voice_installed")
+        
+        with open(marker_path, "w") as f:
+            f.write("installed")
+
+
+def check_installation():
+    """Check if dependencies are already installed"""
+    # Check for marker file
+    marker_path = os.path.join(os.path.dirname(sys.executable), ".tf2voice_installed")
+    if not os.path.exists(marker_path):
+        marker_path = os.path.join(os.path.dirname(__file__), ".tf2voice_installed")
+    
+    if os.path.exists(marker_path):
+        return True
+    
+    # Check if we can import critical packages
+    try:
+        import torch
+        import f5_tts
+        import pydub
+        import vosk
+        return True
+    except ImportError:
+        return False
+
+
+def show_installer():
+    """Show installer dialog and install dependencies"""
+    dialog = DependencyInstaller()
+    worker = InstallWorker()
+    
+    def update_progress(percent, package, status):
+        dialog.progress.setValue(percent)
+        dialog.package_label.setText(f"Installing: {package}")
+        dialog.status_label.setText(status)
+    
+    def installation_finished(success, message):
+        if success:
+            QMessageBox.information(dialog, "Success", message)
+            dialog.accept()
+        else:
+            QMessageBox.critical(dialog, "Installation Failed", message)
+            dialog.reject()
+    
+    worker.progress.connect(update_progress)
+    worker.finished.connect(installation_finished)
+    worker.start()
+    
+    result = dialog.exec()
+    return result == QDialog.DialogCode.Accepted
+
+
+# Now import the optional packages
 try:
     import torch
     from f5_tts.api import F5TTS
@@ -627,6 +800,14 @@ class TF2VoiceEditor(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("TF2 Voice Line Editor")
+    
+    # Check if dependencies need to be installed
+    if not check_installation():
+        if not show_installer():
+            QMessageBox.critical(None, "Installation Failed", 
+                "Could not install required packages. Please install manually:\n"
+                "pip install torch torchaudio f5-tts soundfile pydub vosk requests")
+            sys.exit(1)
     
     window = TF2VoiceEditor()
     window.show()

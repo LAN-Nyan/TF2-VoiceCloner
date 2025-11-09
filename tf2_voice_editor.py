@@ -22,6 +22,56 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt6.QtGui import QFont, QPalette, QColor, QIcon
 
 
+def get_marker_path():
+    """Get the path for the installation marker file"""
+    if getattr(sys, 'frozen', False):
+        # Running as compiled executable
+        app_dir = os.path.dirname(sys.executable)
+    else:
+        # Running as script
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    return os.path.join(app_dir, ".tf2voice_installed")
+
+
+def check_installation():
+    """Check if dependencies are already installed"""
+    marker_path = get_marker_path()
+    
+    # First check marker file
+    if os.path.exists(marker_path):
+        try:
+            with open(marker_path, 'r') as f:
+                content = f.read().strip()
+                if content == "installed":
+                    # Also verify critical packages can be imported
+                    try:
+                        import torch
+                        return True
+                    except ImportError:
+                        # Marker exists but packages missing - delete marker
+                        os.remove(marker_path)
+                        return False
+        except Exception:
+            pass
+    
+    # Check if we can import critical packages
+    try:
+        import torch
+        import f5_tts
+        import pydub
+        import vosk
+        # If we can import them, create the marker
+        try:
+            with open(marker_path, 'w') as f:
+                f.write("installed")
+        except Exception:
+            pass
+        return True
+    except ImportError:
+        return False
+
+
 class DependencyInstaller(QDialog):
     """Dialog for installing dependencies on first run"""
     
@@ -29,7 +79,8 @@ class DependencyInstaller(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Installing Dependencies")
         self.setModal(True)
-        self.setMinimumSize(500, 300)
+        self.setMinimumSize(600, 350)
+        self.installation_complete = False
         self.setup_ui()
         
     def setup_ui(self):
@@ -39,18 +90,23 @@ class DependencyInstaller(QDialog):
         
         # Title
         title = QLabel("First-Time Setup")
-        title.setFont(QFont("Arial", 20, QFont.Weight.Bold))
+        title.setFont(QFont("Arial", 24, QFont.Weight.Bold))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
         
         # Description
-        desc = QLabel("Installing required packages...\nThis only happens once and may take a few minutes.")
+        desc = QLabel(
+            "Installing AI packages (torch, F5-TTS, vosk, etc.)\n"
+            "This only happens once and may take 5-10 minutes.\n\n"
+            "⚠️ Please keep this window open until installation completes!"
+        )
         desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
         desc.setWordWrap(True)
         layout.addWidget(desc)
         
         # Current package label
-        self.package_label = QLabel("Preparing...")
+        self.package_label = QLabel("Preparing installation...")
+        self.package_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
         self.package_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.package_label)
         
@@ -58,12 +114,14 @@ class DependencyInstaller(QDialog):
         self.progress = QProgressBar()
         self.progress.setMinimum(0)
         self.progress.setMaximum(100)
+        self.progress.setTextVisible(True)
         layout.addWidget(self.progress)
         
         # Status label
         self.status_label = QLabel("")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_label.setStyleSheet("color: gray; font-size: 10px;")
+        self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
         
         layout.addStretch()
@@ -81,11 +139,27 @@ class DependencyInstaller(QDialog):
                 text-align: center;
                 background-color: #374151;
                 color: white;
+                font-weight: bold;
             }
             QProgressBar::chunk {
                 background-color: #fb923c;
             }
         """)
+    
+    def closeEvent(self, event):
+        """Prevent closing during installation"""
+        if not self.installation_complete:
+            reply = QMessageBox.question(
+                self, 
+                'Installation in Progress',
+                'Installation is not complete. Closing now may cause issues.\n\nAre you sure you want to close?',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.No:
+                event.ignore()
+                return
+        event.accept()
 
 
 class InstallWorker(QThread):
@@ -96,13 +170,13 @@ class InstallWorker(QThread):
     def __init__(self):
         super().__init__()
         self.packages = [
-            "torch",
-            "torchaudio", 
-            "f5-tts",
-            "soundfile",
-            "pydub",
-            "vosk",
-            "requests"
+            ("torch", "PyTorch (Deep Learning Framework)"),
+            ("torchaudio", "Audio Processing for PyTorch"),
+            ("f5-tts", "F5-TTS (Voice Cloning AI)"),
+            ("soundfile", "Audio File I/O"),
+            ("pydub", "Audio Manipulation"),
+            ("vosk", "Speech Recognition"),
+            ("requests", "HTTP Library")
         ]
         
     def run(self):
@@ -110,60 +184,53 @@ class InstallWorker(QThread):
         try:
             total = len(self.packages)
             
-            for idx, package in enumerate(self.packages):
+            for idx, (package, description) in enumerate(self.packages):
                 percent = int((idx / total) * 100)
-                self.progress.emit(percent, package, f"Installing {package}...")
+                self.progress.emit(percent, package, f"Installing {description}...")
                 
-                # Install package
-                result = subprocess.run(
-                    [sys.executable, "-m", "pip", "install", package, "--quiet"],
-                    capture_output=True,
-                    text=True
-                )
-                
-                if result.returncode != 0:
-                    self.finished.emit(False, f"Failed to install {package}: {result.stderr}")
+                # Install package with explicit timeout and error handling
+                try:
+                    result = subprocess.run(
+                        [sys.executable, "-m", "pip", "install", package, "--no-warn-script-location"],
+                        capture_output=True,
+                        text=True,
+                        timeout=600  # 10 minute timeout per package
+                    )
+                    
+                    if result.returncode != 0:
+                        error_msg = result.stderr if result.stderr else "Unknown error"
+                        self.finished.emit(False, f"Failed to install {package}:\n{error_msg[:500]}")
+                        return
+                    
+                    self.progress.emit(
+                        int(((idx + 1) / total) * 100), 
+                        package, 
+                        f"✓ Installed {description}"
+                    )
+                    
+                except subprocess.TimeoutExpired:
+                    self.finished.emit(False, f"Installation of {package} timed out. Please check your internet connection.")
                     return
-                
-                self.progress.emit(int(((idx + 1) / total) * 100), package, f"Installed {package}")
             
-            # Mark as installed
-            self.mark_installed()
-            self.finished.emit(True, "All packages installed successfully!")
+            # Mark as installed BEFORE signaling finish
+            if self.mark_installed():
+                self.finished.emit(True, "All packages installed successfully! 🎉")
+            else:
+                self.finished.emit(False, "Installation completed but could not create marker file. You may need to run as administrator.")
             
         except Exception as e:
             self.finished.emit(False, f"Installation error: {str(e)}")
     
     def mark_installed(self):
         """Create marker file to indicate installation is complete"""
-        marker_path = os.path.join(os.path.dirname(sys.executable), ".tf2voice_installed")
-        if not os.path.exists(marker_path):
-            # If running from script, use script directory
-            marker_path = os.path.join(os.path.dirname(__file__), ".tf2voice_installed")
-        
-        with open(marker_path, "w") as f:
-            f.write("installed")
-
-
-def check_installation():
-    """Check if dependencies are already installed"""
-    # Check for marker file
-    marker_path = os.path.join(os.path.dirname(sys.executable), ".tf2voice_installed")
-    if not os.path.exists(marker_path):
-        marker_path = os.path.join(os.path.dirname(__file__), ".tf2voice_installed")
-    
-    if os.path.exists(marker_path):
-        return True
-    
-    # Check if we can import critical packages
-    try:
-        import torch
-        import f5_tts
-        import pydub
-        import vosk
-        return True
-    except ImportError:
-        return False
+        try:
+            marker_path = get_marker_path()
+            with open(marker_path, "w") as f:
+                f.write("installed")
+            return True
+        except Exception as e:
+            print(f"Could not create marker file: {e}")
+            return False
 
 
 def show_installer():
@@ -177,11 +244,16 @@ def show_installer():
         dialog.status_label.setText(status)
     
     def installation_finished(success, message):
+        dialog.installation_complete = True
         if success:
-            QMessageBox.information(dialog, "Success", message)
+            QMessageBox.information(dialog, "Success", message + "\n\nThe application will now start.")
             dialog.accept()
         else:
-            QMessageBox.critical(dialog, "Installation Failed", message)
+            QMessageBox.critical(dialog, "Installation Failed", 
+                message + "\n\nYou can try:\n"
+                "1. Running as administrator\n"
+                "2. Checking your internet connection\n"
+                "3. Installing manually: pip install torch torchaudio f5-tts soundfile pydub vosk requests")
             dialog.reject()
     
     worker.progress.connect(update_progress)
@@ -189,6 +261,10 @@ def show_installer():
     worker.start()
     
     result = dialog.exec()
+    
+    # Make sure thread is finished
+    worker.wait()
+    
     return result == QDialog.DialogCode.Accepted
 
 
@@ -798,17 +874,35 @@ class TF2VoiceEditor(QMainWindow):
 
 
 def main():
+    # Create QApplication first
     app = QApplication(sys.argv)
     app.setApplicationName("TF2 Voice Line Editor")
     
-    # Check if dependencies need to be installed
+    # Check if dependencies need to be installed (only once per app instance)
     if not check_installation():
+        print("Dependencies not found. Starting installer...")
         if not show_installer():
-            QMessageBox.critical(None, "Installation Failed", 
-                "Could not install required packages. Please install manually:\n"
-                "pip install torch torchaudio f5-tts soundfile pydub vosk requests")
+            QMessageBox.critical(
+                None, 
+                "Installation Failed", 
+                "Could not install required packages.\n\n"
+                "Please install manually:\n"
+                "pip install torch torchaudio f5-tts soundfile pydub vosk requests\n\n"
+                "Or run as administrator and try again."
+            )
+            sys.exit(1)
+        
+        # Verify installation succeeded
+        if not check_installation():
+            QMessageBox.critical(
+                None,
+                "Verification Failed",
+                "Installation completed but packages could not be verified.\n\n"
+                "Please restart the application."
+            )
             sys.exit(1)
     
+    # Only create main window after installation check
     window = TF2VoiceEditor()
     window.show()
     

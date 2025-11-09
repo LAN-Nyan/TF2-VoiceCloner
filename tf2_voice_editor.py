@@ -22,6 +22,11 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt6.QtGui import QFont, QPalette, QColor, QIcon
 
 
+# CRITICAL: Global flag to prevent multiple installation attempts
+_INSTALLATION_CHECKED = False
+_INSTALLATION_IN_PROGRESS = False
+
+
 def get_marker_path():
     """Get the path for the installation marker file"""
     if getattr(sys, 'frozen', False):
@@ -36,6 +41,12 @@ def get_marker_path():
 
 def check_installation():
     """Check if dependencies are already installed"""
+    global _INSTALLATION_CHECKED
+    
+    # If we've already checked this session, return True to skip
+    if _INSTALLATION_CHECKED:
+        return True
+    
     marker_path = get_marker_path()
     
     # First check marker file
@@ -47,6 +58,7 @@ def check_installation():
                     # Also verify critical packages can be imported
                     try:
                         import torch
+                        _INSTALLATION_CHECKED = True
                         return True
                     except ImportError:
                         # Marker exists but packages missing - delete marker
@@ -67,6 +79,7 @@ def check_installation():
                 f.write("installed")
         except Exception:
             pass
+        _INSTALLATION_CHECKED = True
         return True
     except ImportError:
         return False
@@ -235,37 +248,53 @@ class InstallWorker(QThread):
 
 def show_installer():
     """Show installer dialog and install dependencies"""
-    dialog = DependencyInstaller()
-    worker = InstallWorker()
+    global _INSTALLATION_IN_PROGRESS, _INSTALLATION_CHECKED
     
-    def update_progress(percent, package, status):
-        dialog.progress.setValue(percent)
-        dialog.package_label.setText(f"Installing: {package}")
-        dialog.status_label.setText(status)
+    # CRITICAL: Prevent multiple simultaneous installations
+    if _INSTALLATION_IN_PROGRESS:
+        print("Installation already in progress, skipping...")
+        return False
     
-    def installation_finished(success, message):
-        dialog.installation_complete = True
-        if success:
-            QMessageBox.information(dialog, "Success", message + "\n\nThe application will now start.")
-            dialog.accept()
-        else:
-            QMessageBox.critical(dialog, "Installation Failed", 
-                message + "\n\nYou can try:\n"
-                "1. Running as administrator\n"
-                "2. Checking your internet connection\n"
-                "3. Installing manually: pip install torch torchaudio f5-tts soundfile pydub vosk requests")
-            dialog.reject()
+    _INSTALLATION_IN_PROGRESS = True
     
-    worker.progress.connect(update_progress)
-    worker.finished.connect(installation_finished)
-    worker.start()
+    try:
+        dialog = DependencyInstaller()
+        worker = InstallWorker()
+        
+        def update_progress(percent, package, status):
+            dialog.progress.setValue(percent)
+            dialog.package_label.setText(f"Installing: {package}")
+            dialog.status_label.setText(status)
+        
+        def installation_finished(success, message):
+            global _INSTALLATION_IN_PROGRESS, _INSTALLATION_CHECKED
+            dialog.installation_complete = True
+            if success:
+                _INSTALLATION_CHECKED = True
+                QMessageBox.information(dialog, "Success", message + "\n\nThe application will now start.")
+                dialog.accept()
+            else:
+                QMessageBox.critical(dialog, "Installation Failed", 
+                    message + "\n\nYou can try:\n"
+                    "1. Running as administrator\n"
+                    "2. Checking your internet connection\n"
+                    "3. Installing manually: pip install torch torchaudio f5-tts soundfile pydub vosk requests")
+                dialog.reject()
+            _INSTALLATION_IN_PROGRESS = False
+        
+        worker.progress.connect(update_progress)
+        worker.finished.connect(installation_finished)
+        worker.start()
+        
+        result = dialog.exec()
+        
+        # Make sure thread is finished
+        worker.wait()
+        
+        return result == QDialog.DialogCode.Accepted
     
-    result = dialog.exec()
-    
-    # Make sure thread is finished
-    worker.wait()
-    
-    return result == QDialog.DialogCode.Accepted
+    finally:
+        _INSTALLATION_IN_PROGRESS = False
 
 
 # Now import the optional packages
@@ -874,14 +903,25 @@ class TF2VoiceEditor(QMainWindow):
 
 
 def main():
+    global _INSTALLATION_CHECKED
+    
+    # CRITICAL: Only allow one instance
+    if _INSTALLATION_IN_PROGRESS:
+        print("Application already running!")
+        return
+    
     # Create QApplication first
     app = QApplication(sys.argv)
     app.setApplicationName("TF2 Voice Line Editor")
     
     # Check if dependencies need to be installed (only once per app instance)
-    if not check_installation():
+    needs_install = not check_installation()
+    
+    if needs_install:
         print("Dependencies not found. Starting installer...")
-        if not show_installer():
+        success = show_installer()
+        
+        if not success:
             QMessageBox.critical(
                 None, 
                 "Installation Failed", 
@@ -892,15 +932,8 @@ def main():
             )
             sys.exit(1)
         
-        # Verify installation succeeded
-        if not check_installation():
-            QMessageBox.critical(
-                None,
-                "Verification Failed",
-                "Installation completed but packages could not be verified.\n\n"
-                "Please restart the application."
-            )
-            sys.exit(1)
+        # Mark as checked to prevent re-running
+        _INSTALLATION_CHECKED = True
     
     # Only create main window after installation check
     window = TF2VoiceEditor()
@@ -909,5 +942,7 @@ def main():
     sys.exit(app.exec())
 
 
+if __name__ == "__main__":
+    main()
 if __name__ == "__main__":
     main()

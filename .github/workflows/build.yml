@@ -35,21 +35,18 @@ jobs:
           echo "FFMPEG_BIN_PATH=$($ffmpeg_folder.FullName)\bin" >> $env:GITHUB_ENV
         shell: powershell
       
-      - name: Build with PyInstaller (Lightweight) ✅
-        # Added hidden imports for ML packages to ensure the application starts cleanly
+- name: Build with PyInstaller (Lightweight) ✅
+        # Updated to use --collect-all for robust dependency bundling,
+        # which fixes issues with torch and f5-tts sub-modules/DLLs.
         run: |
-          # Build only with PyQt6, letting the app install ML libs at runtime
           pyinstaller --onefile --windowed --name "TF2VoiceEditor-Windows" `
             --collect-all PyQt6 `
+            --collect-all torch `      # <-- Comprehensive collection for PyTorch
+            --collect-all f5_tts `     # <-- Comprehensive collection for F5-TTS
+            --collect-all torchaudio ` # <-- Comprehensive collection for Torchaudio
+            --collect-all vosk `       # <-- Comprehensive collection for Vosk
             --add-binary "${{ env.FFMPEG_BIN_PATH }}\ffmpeg.exe;." `
             --add-binary "${{ env.FFMPEG_BIN_PATH }}\ffprobe.exe;." `
-            --hidden-import "PyQt6.QtCore" `
-            --hidden-import "PyQt6.QtGui" `
-            --hidden-import "PyQt6.QtWidgets" `
-            --hidden-import "torch._C" `
-            --hidden-import "torchaudio.lib.libtorchaudio" `
-            --hidden-import "f5_tts" `
-            --hidden-import "vosk" `
             tf2_voice_editor.py
         shell: powershell
       

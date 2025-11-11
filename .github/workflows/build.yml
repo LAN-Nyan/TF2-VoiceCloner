@@ -10,16 +10,19 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      
-      - name: Install minimal dependencies for building
+
+      - name: Install all required dependencies for building 💡
+        # Install all dependencies so PyInstaller can analyze them correctly
         run: |
           pip install pyinstaller
           pip install PyQt6
+          pip install torch torchaudio f5-tts vosk pydub soundfile
+        shell: bash # Use bash/cmd for consistent pip install on Windows runner
       
       - name: ⬇️ Download and Setup FFmpeg
         run: |
@@ -32,7 +35,8 @@ jobs:
           echo "FFMPEG_BIN_PATH=$($ffmpeg_folder.FullName)\bin" >> $env:GITHUB_ENV
         shell: powershell
       
-      - name: Build with PyInstaller (Lightweight)
+      - name: Build with PyInstaller (Lightweight) ✅
+        # Added hidden imports for ML packages to ensure the application starts cleanly
         run: |
           # Build only with PyQt6, letting the app install ML libs at runtime
           pyinstaller --onefile --windowed --name "TF2VoiceEditor-Windows" `
@@ -42,6 +46,10 @@ jobs:
             --hidden-import "PyQt6.QtCore" `
             --hidden-import "PyQt6.QtGui" `
             --hidden-import "PyQt6.QtWidgets" `
+            --hidden-import "torch._C" `
+            --hidden-import "torchaudio.lib.libtorchaudio" `
+            --hidden-import "f5_tts" `
+            --hidden-import "vosk" `
             tf2_voice_editor.py
         shell: powershell
       
@@ -55,23 +63,26 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      
-      - name: Install minimal dependencies for building
+
+      - name: Install all required dependencies for building 💡
+        # Install all dependencies so PyInstaller can analyze them correctly
         run: |
           pip install pyinstaller
           pip install PyQt6
-      
+          pip install torch torchaudio f5-tts vosk pydub soundfile
+
       - name: Install FFmpeg via Homebrew
         run: |
           brew install ffmpeg
           echo "FFMPEG_BIN_PATH=$(which ffmpeg | xargs dirname)" >> $GITHUB_ENV
-      
-      - name: Build with PyInstaller (Lightweight)
+
+      - name: Build with PyInstaller (Lightweight) ✅
+        # Added hidden imports for ML packages to ensure the application starts cleanly
         run: |
           # Build only with PyQt6, letting the app install ML libs at runtime
           pyinstaller --onefile --windowed --name "TF2VoiceEditor-macOS" \
@@ -81,8 +92,12 @@ jobs:
             --hidden-import "PyQt6.QtCore" \
             --hidden-import "PyQt6.QtGui" \
             --hidden-import "PyQt6.QtWidgets" \
+            --hidden-import "torch._C" \
+            --hidden-import "torchaudio.lib.libtorchaudio" \
+            --hidden-import "f5_tts" \
+            --hidden-import "vosk" \
             tf2_voice_editor.py
-      
+
       - name: Create DMG
         run: |
           # Create a simple DMG for distribution
@@ -91,13 +106,13 @@ jobs:
           # Create Applications symlink for easy drag-and-drop
           ln -s /Applications dist/dmg/Applications
           hdiutil create -volname "TF2VoiceEditor" -srcfolder dist/dmg -ov -format UDZO dist/TF2VoiceEditor-macOS.dmg
-      
+
       - name: Upload macOS App
         uses: actions/upload-artifact@v4
         with:
           name: TF2VoiceEditor-macOS-app
           path: dist/TF2VoiceEditor-macOS.app
-      
+
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v4
         with:
@@ -111,12 +126,12 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-      
+
       - name: Create Release Notes
         run: |
           cat > RELEASE_NOTES.md << 'EOF'
@@ -215,7 +230,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v1.0.0-${{ steps.date.outputs.date }}
+          tag_name: v1.1.0-${{ steps.date.outputs.date }}
           name: "🎮 TF2 Voice Editor v1.0.0 - Auto-Install Edition"
           body_path: RELEASE_NOTES.md
           draft: false
